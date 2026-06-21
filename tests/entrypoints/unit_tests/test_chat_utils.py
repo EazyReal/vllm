@@ -18,6 +18,7 @@ from vllm.entrypoints.chat_utils import (
     parse_chat_messages,
     parse_chat_messages_async,
 )
+from vllm.exceptions import VLLMValidationError
 from vllm.inputs import MultiModalDataDict, MultiModalUUIDDict
 from vllm.multimodal.utils import (
     encode_audio_url,
@@ -2742,3 +2743,56 @@ def test_postprocess_messages_null_arguments_string():
     tool_calls = messages[0]["tool_calls"]
     assert tool_calls is not None
     assert tool_calls[0]["function"]["arguments"] == {}
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        [1, 2, 3],  # raw non-object
+        "[1, 2, 3]",  # JSON string encoding a non-object
+        42,  # raw scalar (previously raised TypeError inside json.loads)
+        "{not json}",  # invalid JSON
+    ],
+)
+def test_postprocess_messages_non_object_arguments_rejected(arguments):
+    """Non-object tool_call arguments must be rejected, not passed to the
+    template where they cause an opaque 500."""
+    messages: list[ConversationMessage] = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "f", "arguments": arguments},
+                }
+            ],
+        }
+    ]
+    with pytest.raises(VLLMValidationError):
+        _postprocess_messages(messages)
+
+
+def test_parse_chat_messages_does_not_mutate_request(phi3v_model_config):
+    """Argument normalization must not leak back into the caller's messages."""
+    messages = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "f", "arguments": '{"a": 1}'},
+                }
+            ],
+        }
+    ]
+
+    conversation, _, _ = parse_chat_messages(
+        messages, phi3v_model_config, content_format="string"
+    )
+
+    assert messages[0]["tool_calls"][0]["function"]["arguments"] == '{"a": 1}'
+    assert conversation[0]["tool_calls"][0]["function"]["arguments"] == {"a": 1}
