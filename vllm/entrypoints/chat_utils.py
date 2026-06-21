@@ -6,6 +6,7 @@ import json
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
 from collections.abc import Awaitable, Callable, Iterable
+from copy import deepcopy
 from dataclasses import dataclass
 from functools import cached_property, lru_cache, partial
 from itertools import accumulate
@@ -1772,7 +1773,9 @@ def _parse_chat_message_content(
             # It's needed only if downstream code doesn't strictly
             # follow the OpenAI spec.
             if "tool_calls" in parsed_msg and parsed_msg["tool_calls"] is not None:
-                result_msg["tool_calls"] = list(parsed_msg["tool_calls"])
+                # Deep-copy: _postprocess_messages normalizes arguments in place,
+                # which would otherwise mutate the caller's request messages.
+                result_msg["tool_calls"] = deepcopy(parsed_msg["tool_calls"])
             # Include reasoning if present for interleaved thinking.
             if reasoning is not None:
                 result_msg["reasoning"] = cast(str, reasoning)
@@ -1851,13 +1854,24 @@ def _postprocess_messages(messages: list[ConversationMessage]) -> None:
                         parameter="tool_calls",
                     )
 
-                # if arguments is None or empty string, set to {}
-                if content := function.get("arguments"):
-                    if not isinstance(content, (dict, list)):
-                        parsed = json.loads(content)
-                        function["arguments"] = parsed if parsed is not None else {}
-                else:
+                arguments = function.get("arguments")
+                if isinstance(arguments, str) and arguments:
+                    try:
+                        arguments = json.loads(arguments)
+                    except json.JSONDecodeError as e:
+                        raise VLLMValidationError(
+                            "assistant tool_calls 'arguments' must be valid JSON.",
+                            parameter="tool_calls",
+                        ) from e
+                if arguments is None or arguments == "":
                     function["arguments"] = {}
+                elif isinstance(arguments, dict):
+                    function["arguments"] = arguments
+                else:
+                    raise VLLMValidationError(
+                        "assistant tool_calls 'arguments' must be a JSON object.",
+                        parameter="tool_calls",
+                    )
 
 
 def parse_chat_messages(
