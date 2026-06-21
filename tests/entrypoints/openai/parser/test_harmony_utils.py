@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import pytest
-from openai.types.responses import FunctionTool
+from openai.types.responses import FileSearchTool, FunctionTool, WebSearchTool
 from openai_harmony import DeveloperContent, Message, Role
 
 from tests.entrypoints.openai.utils import verify_harmony_messages
@@ -11,6 +11,7 @@ from vllm.entrypoints.openai.parser.harmony_utils import (
     auto_drop_analysis_messages,
     create_tool_definition,
     extract_function_from_recipient,
+    get_developer_message,
     get_system_message,
     has_custom_tools,
     is_function_recipient,
@@ -72,6 +73,28 @@ class TestCreateToolDefinition:
         assert tool_definition.name == "report_status"
         assert tool_definition.description == ""
         assert tool_definition.parameters == _TOOL_PARAMETERS
+
+
+class TestGetDeveloperMessage:
+    def test_ga_builtin_tools_skipped_not_rejected(self):
+        # The Responses SDK sends GA built-ins (web_search, file_search, ...)
+        # that have no harmony template; drop them rather than 500 the request,
+        # while still registering function tools.
+        tools = [
+            WebSearchTool(type="web_search"),
+            FileSearchTool(type="file_search", vector_store_ids=[]),
+            FunctionTool(
+                name="get_weather",
+                description="",
+                parameters=_TOOL_PARAMETERS,
+                type="function",
+            ),
+        ]
+
+        dev_msg = get_developer_message(tools=tools)
+
+        functions = dev_msg.content[0].tools["functions"]
+        assert [tool.name for tool in functions.tools] == ["get_weather"]
 
 
 class TestIsFunctionRecipient:

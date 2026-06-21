@@ -180,7 +180,12 @@ def get_developer_message(
             elif tool.type == "function":
                 function_tools.append(tool)
             else:
-                raise ValueError(f"tool type {tool.type} not supported")
+                # No harmony prompt template for the remaining built-ins;
+                # drop them so the request still runs.
+                logger.debug(
+                    "harmony: ignoring unsupported response tool type %r",
+                    tool.type,
+                )
         if function_tools:
             function_tool_descriptions = [
                 create_tool_definition(tool) for tool in function_tools
